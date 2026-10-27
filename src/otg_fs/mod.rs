@@ -162,8 +162,8 @@ where
     pub fn new(
         _usb: Peri<'d, T>,
         // _irq: impl interrupt::typelevel::Binding<T::Interrupt, InterruptHandler<T>> + 'd,
-        dp: Peri<'d, impl crate::gpio::Pin>,
-        dm: Peri<'d, impl crate::gpio::Pin>,
+        dp: Peri<'d, impl DpPin<T, 0>>,
+        dm: Peri<'d, impl DmPin<T, 0>>,
         ep_buffer: &'d mut [EndpointDataBuffer<SIZE>; NR_EP],
     ) -> Self {
         Self::new_with_config(_usb, dp, dm, ep_buffer, Config::default())
@@ -173,8 +173,8 @@ where
     pub fn new_with_config(
         _usb: Peri<'d, T>,
         // _irq: impl interrupt::typelevel::Binding<T::Interrupt, InterruptHandler<T>> + 'd,
-        dp: Peri<'d, impl crate::gpio::Pin>,
-        dm: Peri<'d, impl crate::gpio::Pin>,
+        dp: Peri<'d, impl DpPin<T, 0>>,
+        dm: Peri<'d, impl DmPin<T, 0>>,
         ep_buffer: &'d mut [EndpointDataBuffer<SIZE>; NR_EP],
         config: Config,
     ) -> Self {

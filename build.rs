@@ -403,6 +403,11 @@ fn main() {
         (("sdio", "D8"), quote!(crate::sdio::D8Pin)),
         (("otg", "DP"), quote!(crate::otg_fs::DpPin)),
         (("otg", "DM"), quote!(crate::otg_fs::DmPin)),
+        // The X0 family's USBFS block is `kind: usb`, `version: x0fs`, and is
+        // driven by the same `otg_fs` module, so its pins land on the same two
+        // traits. The metadata fixes them to PC17/DP and PC16/DM.
+        (("usb", "DP"), quote!(crate::otg_fs::DpPin)),
+        (("usb", "DM"), quote!(crate::otg_fs::DmPin)),
         (("usbd", "DP"), quote!(crate::usbd::DpPin)),
         (("usbd", "DM"), quote!(crate::usbd::DmPin)),
         (("spi", "MISO"), quote!(crate::spi::MisoPin)),
@@ -426,6 +431,19 @@ fn main() {
     // emitted below.
     if h4 {
         pin_signals.retain(|key, _| !matches!(key.0, "spi" | "can" | "usbhs"));
+    }
+
+    // `kind: usb` covers four unrelated blocks: `v1fs`, `v2fs`, `l1fs` and the
+    // X0 family's `x0fs`. Only `x0fs` is driven by `otg_fs`, which is
+    // `#[cfg(any(otg, usb_x0fs))]`, so on the other three the rows above would
+    // name a module that is not compiled.
+    let usb_x0fs = METADATA
+        .peripherals
+        .iter()
+        .filter_map(|p| p.registers.as_ref())
+        .any(|r| r.kind == "usb" && r.version == "x0fs");
+    if !usb_x0fs {
+        pin_signals.retain(|key, _| key.0 != "usb");
     }
 
     for p in METADATA.peripherals {
