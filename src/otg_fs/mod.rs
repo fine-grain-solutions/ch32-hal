@@ -20,9 +20,9 @@
 //! - [ ] Bulk In (Expected to work but not tested)
 //!
 //! Other Features:
-//! - [ ] Set endpoint stall
-//! - [ ] Get endpoint stall status
-//! - [ ] Remote wakeup
+//! - [x] Set endpoint stall (untested)
+//! - [x] Get endpoint stall status (untested)
+//! - [ ] Remote wakeup (reports `Unsupported`)
 //!
 
 use core::future::poll_fn;
@@ -488,16 +488,32 @@ where
         EP_WAKERS[ep_addr.index() as usize].wake();
     }
 
-    fn endpoint_set_stalled(&mut self, _ep_addr: EndpointAddress, _stalled: bool) {
-        todo!()
+    fn endpoint_set_stalled(&mut self, ep_addr: EndpointAddress, stalled: bool) {
+        let ep = ep_addr.index();
+        match (ep_addr.direction(), stalled) {
+            (Direction::In, true) => T::set_ep_tx_response(ep, EpTxResponse::STALL),
+            (Direction::Out, true) => T::set_ep_rx_response(ep, EpRxResponse::STALL),
+            // USB 2.0 9.4.5: clearing a halt resets the endpoint's data
+            // toggle to DATA0. The handshake field and the toggle bit share
+            // one control register, so both go back in a single write.
+            (Direction::In, false) => T::set_ep_tx_toggle_response(ep, false, EpTxResponse::NAK),
+            (Direction::Out, false) => T::set_ep_rx_toggle_response(ep, false, EpRxResponse::NAK),
+        }
+        EP_WAKERS[ep].wake();
     }
 
-    fn endpoint_is_stalled(&mut self, _ep_addr: EndpointAddress) -> bool {
-        todo!()
+    fn endpoint_is_stalled(&mut self, ep_addr: EndpointAddress) -> bool {
+        match ep_addr.direction() {
+            Direction::In => T::ep_tx_response(ep_addr.index()) == EpTxResponse::STALL,
+            Direction::Out => T::ep_rx_response(ep_addr.index()) == EpRxResponse::STALL,
+        }
     }
 
     async fn remote_wakeup(&mut self) -> Result<(), embassy_usb_driver::Unsupported> {
-        todo!()
+        // Not implemented. Returning the error is what `embassy-usb` expects
+        // for a device that cannot drive resume signalling; panicking here
+        // took the whole device down as soon as a host asked for it.
+        Err(embassy_usb_driver::Unsupported)
     }
 }
 
@@ -513,6 +529,8 @@ pub(crate) trait SealedInstance: RccPeripheral {
     fn set_ep_tx_len(ep: usize, len: u8);
     fn set_ep_tx_response(ep: usize, response: EpTxResponse);
     fn set_ep_rx_response(ep: usize, response: EpRxResponse);
+    fn ep_tx_response(ep: usize) -> EpTxResponse;
+    fn ep_rx_response(ep: usize) -> EpRxResponse;
     fn set_ep_tx_toggle_response(ep: usize, toggle: bool, response: EpTxResponse);
     fn set_ep_rx_toggle_response(ep: usize, toggle: bool, response: EpRxResponse);
     fn toggle_ep_tx_response(ep: usize, response: EpTxResponse);
@@ -558,6 +576,14 @@ foreach_peripheral!(
 
             fn set_ep_rx_response(ep: usize, response: EpRxResponse) {
                 Self::regs().uep_rx_ctrl(ep).modify(|w| w.set_mask_r_res(response));
+            }
+
+            fn ep_tx_response(ep: usize) -> EpTxResponse {
+                Self::regs().uep_tx_ctrl(ep).read().mask_t_res()
+            }
+
+            fn ep_rx_response(ep: usize) -> EpRxResponse {
+                Self::regs().uep_rx_ctrl(ep).read().mask_r_res()
             }
 
             fn set_ep_tx_toggle_response(ep: usize, toggle: bool, response: EpTxResponse) {
@@ -682,6 +708,14 @@ foreach_peripheral!(
                 Self::modify_ep_ctrl(ep, |w| w.set_r_res(response));
             }
 
+            fn ep_tx_response(ep: usize) -> EpTxResponse {
+                Self::read_ep_ctrl(ep).t_res()
+            }
+
+            fn ep_rx_response(ep: usize) -> EpRxResponse {
+                Self::read_ep_ctrl(ep).r_res()
+            }
+
             fn set_ep_tx_toggle_response(ep: usize, toggle: bool, response: EpTxResponse) {
                 Self::modify_ep_ctrl(ep, |w| {
                     w.set_t_tog(toggle);
@@ -759,6 +793,15 @@ foreach_peripheral!(
                 match ep {
                     0..=4 => regs.uep01234_ctrl(ep).modify(f),
                     5..=7 => regs.uep567_ctrl(ep - 5).modify(f),
+                    _ => panic!("unsupported USBFS endpoint"),
+                }
+            }
+
+            fn read_ep_ctrl(ep: usize) -> crate::pac::usb::regs::UepCtrl {
+                let regs = <Self as SealedInstance>::regs();
+                match ep {
+                    0..=4 => regs.uep01234_ctrl(ep).read(),
+                    5..=7 => regs.uep567_ctrl(ep - 5).read(),
                     _ => panic!("unsupported USBFS endpoint"),
                 }
             }
