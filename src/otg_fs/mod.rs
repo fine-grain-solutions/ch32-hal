@@ -73,10 +73,23 @@ pub(crate) type UsbToken = crate::pac::usb::vals::UsbToken;
 /// USB PHY configuration.
 #[derive(Clone, Copy, Debug)]
 pub struct Config {
-    /// Use direct VDD PHY output and pull-up. Set this to `false` for USB at VDD above 4V.
+    /// Limit the PHY's output swing and its pull-up to 3.3 V (`AFIO_CTLR.USB_PHY_V33`).
+    ///
+    /// True for a part running at 3.3 V. Set it false when VDD is above 4 V,
+    /// and pair that with [`Config::udp_pue`] = `0b10`, because the 1.5 k
+    /// pull-up is only correct behind the 3.3 V limiter.
     #[cfg(usb_x0fs)]
     pub usb_phy_v33: bool,
-    /// AFIO pull-up mode for UDP/DP. `0b11` is the USB 1.5k pull-up for 3.3V.
+    /// Pull-up on UDP/D+ (`AFIO_CTLR.UDP_PUE`), a two-bit field:
+    ///
+    /// | Value  | Pull-up                                     |
+    /// |--------|---------------------------------------------|
+    /// | `0b00` | disabled                                    |
+    /// | `0b01` | 35 uA current source                        |
+    /// | `0b10` | 10 k, for VDD above 4 V                     |
+    /// | `0b11` | 1.5 k, the full-speed pull-up at 3.3 V      |
+    ///
+    /// Only D+ is pulled up: this driver is full speed, so UDM_PUE stays off.
     #[cfg(usb_x0fs)]
     pub udp_pue: u8,
 }
@@ -669,6 +682,11 @@ foreach_peripheral!(
             }
 
             fn configure_pins(dp: Peri<'_, impl crate::gpio::Pin>, dm: Peri<'_, impl crate::gpio::Pin>, config: Config) {
+                // UDP_PUE is two bits wide; a larger value would be truncated
+                // into a different pull-up and the fault would only show as a
+                // device the host never sees.
+                assert!(config.udp_pue <= 0b11, "udp_pue is a two-bit field");
+
                 dp.set_as_input(Pull::Up);
                 dm.set_as_input(Pull::None);
 
