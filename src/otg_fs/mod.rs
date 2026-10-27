@@ -101,8 +101,14 @@ impl<T: Instance> interrupt::typelevel::Handler<T::Interrupt> for InterruptHandl
         let regs = T::regs();
         let int_fg = regs.int_fg().read();
 
+        // FIFO overflow latches whether or not its enable bit is set, and only
+        // a write of 1 clears it. Left standing it made every later interrupt,
+        // for any unrelated endpoint, take this branch, so the panic named
+        // whichever transfer happened to come next rather than the one that
+        // overflowed. Clear it and report it instead.
         if int_fg.fifo_ov() {
-            panic!("overflow");
+            regs.int_fg().write(|v| v.set_fifo_ov(true));
+            error!("[USBFS] FIFO overflow");
         }
 
         // All the interrupt we handle
@@ -308,6 +314,20 @@ impl<'d, T: Instance, const NR_EP: usize, const SIZE: usize> embassy_usb_driver:
 
         // Clear all
         regs.ctrl().write(|_| {});
+
+        // Every interrupt flag is write-1-to-clear and survives the SIE reset
+        // above. On the X0 family the factory bootloader enumerates over this
+        // same block, so a bus reset or suspend raised before the application
+        // started can still be standing here. Clear the lot before `int_en`
+        // and the NVIC are opened up, or the first interrupt fires during
+        // start-up and `poll` reports an event that belongs to the bootloader.
+        regs.int_fg().write(|w| {
+            w.set_bus_rst(true);
+            w.set_transfer(true);
+            w.set_suspend(true);
+            w.set_hst_sof(true);
+            w.set_fifo_ov(true);
+        });
 
         regs.int_en().write(|w| {
             // w.set_dev_nak(true);
